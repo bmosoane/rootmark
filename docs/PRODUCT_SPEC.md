@@ -108,14 +108,20 @@ Claim state and check results are separate concepts. A transient check result mu
 ```ts
 type ClaimStatus = "pending" | "verified";
 
-type CheckResult =
-  | { kind: "verified"; verifiedAt: string }
+type DnsCheckResult =
+  | { kind: "verified"; checkedAt: string; verifiedAt: string }
   | { kind: "not_found"; checkedAt: string }
   | { kind: "wrong_value"; checkedAt: string; observed: string[] }
   | { kind: "wrong_host"; checkedAt: string; observedAt: string }
-  | { kind: "lookup_failed"; checkedAt: string; retryable: true }
-  | { kind: "rate_limited"; retryAfterSeconds: number }
-  | { kind: "already_claimed" };
+  | { kind: "lookup_failed"; checkedAt: string; retryable: true };
+
+type StoredCheckResult =
+  | DnsCheckResult
+  | { kind: "already_claimed"; checkedAt: string };
+
+type CheckResult =
+  | StoredCheckResult
+  | { kind: "rate_limited"; retryAfterSeconds: number };
 ```
 
 Rules:
@@ -125,7 +131,7 @@ Rules:
 - A token is unique, random, and bound to one claim.
 - The first session to verify a domain owns the active claim; other sessions learn only that it is already claimed, never who claimed it.
 - Rechecking a verified claim is allowed. In the MVP, a missing record does not automatically revoke ownership; ongoing re-verification is documented as a production extension.
-- Check attempts are append-only events even though the claim holds the latest result for fast rendering.
+- The claim stores the latest durable observation for fast rendering. A full append-only audit log is a documented production extension rather than implied by the MVP schema.
 
 ## Domain rules
 
@@ -163,7 +169,7 @@ The copy must say “we cannot see it yet,” not “DNS is propagating,” unle
 ## Trust and safety decisions
 
 - Generate challenges with a cryptographically secure random source.
-- Store a server-generated opaque session identifier in an `HttpOnly`, `Secure`, `SameSite=Lax` cookie.
+- Store a server-generated opaque session identifier in an `HttpOnly`, `Secure`, `SameSite=Lax` cookie and persist only its SHA-256 hash.
 - Return `404` for a claim owned by another session to avoid leaking claim existence.
 - Validate all route inputs at the server boundary.
 - Rate-limit DNS checks per claim and session.
@@ -232,9 +238,10 @@ flowchart LR
     end
 
     subgraph App["Application boundary · Next.js on Vercel"]
-        Routes["Route handlers<br/>request orchestration"]
-        Session["Session boundary<br/>opaque session ID"]
-        Domain["Domain services<br/>normalize + verify"]
+        Routes["Route handlers<br/>HTTP adapter"]
+        Session["Session boundary<br/>opaque cookie → hashed key"]
+        Service["Claims service<br/>use-case orchestration"]
+        Verify["Verification service<br/>evidence evaluation"]
         Repo["ClaimsRepository<br/>persistence port"]
         Resolver["DnsResolver<br/>outbound port"]
     end
@@ -246,17 +253,40 @@ flowchart LR
 
     Browser <-->|"HTTPS JSON<br/>HttpOnly session cookie"| Routes
     Routes -->|"read or issue session"| Session
-    Routes -->|"normalize input or evaluate claim"| Domain
-    Routes -->|"load and persist"| Repo
-    Domain -->|"resolve TXT through interface"| Resolver
+    Routes -->|"validated command + session key"| Service
+    Service -->|"load and persist"| Repo
+    Service -->|"evaluate public proof"| Verify
+    Verify -->|"resolve TXT through interface"| Resolver
     Repo --> DB
     Resolver --> DNS
 ```
 
 The cookie contains an opaque random identifier; it is not a signed identity token.
-Authorization comes from matching that identifier to `session_id` on every claim
-operation. Zod parses request data at the route boundary, while DNS responses remain
-untrusted input handled by the resolver adapter.
+Authorization comes from hashing that identifier and matching the result to
+`session_key` on every claim operation. Zod parses request data at the route boundary
+and validates the Cloudflare response before the resolver exposes TXT observations.
+
+### Resolver decision
+
+Cloudflare is an implementation choice behind `DnsResolver`, not part of the
+ownership model. The MVP uses one canonical public resolver so verification has a
+single, predictable source of observation.
+
+| Option | Benefits | Cost or risk | Decision |
+| --- | --- | --- | --- |
+| Cloudflare JSON DoH | No credentials, explicit HTTPS boundary, small readable adapter, and a documented TXT response shape that can be validated with Zod. | The JSON representation is Cloudflare-specific and not an IETF-standard DNS schema. | **Selected.** The adapter is isolated, malformed responses fail closed as `lookup_failed`, and an upstream format change cannot produce false verification. |
+| RFC 8484 wire-format DoH | Standards-based and portable across compatible providers such as Cloudflare and Google. | Requires a maintained DNS packet codec and adds binary protocol complexity that does not improve the product flow within this timebox. | Production-hardening option if provider portability or formal protocol stability becomes a requirement. We would use a library rather than implement DNS packet parsing. |
+| Node `dns.resolveTxt()` | Minimal application code and native handling of segmented TXT records. | Resolution depends on the deployment runtime's configured DNS transport and recursive resolver rather than an explicit HTTPS service boundary. | Not selected because the deployed observation source should be intentional and visible. |
+| Google Public DNS | Offers both RFC 8484 wire format and a JSON API with similar capabilities. | Provides no material MVP advantage over Cloudflare; automatic fallback would make conflicting or time-shifted observations harder to explain. | Kept replaceable through `DnsResolver`, not queried in the primary path. |
+| Multiple public resolvers | Can reveal that cached observations currently differ between resolvers. | Requiring consensus increases false negatives; accepting any result expands the trusted surface; user selection weakens the verification policy. | Excluded from verification. A future diagnostic could show secondary observations without allowing them to determine ownership. |
+| Direct authoritative lookup or a custom resolver | Maximum control and a view closer to the authoritative source. | Requires correct delegation discovery, retries, TCP fallback, packet parsing, and potentially DNSSEC validation. | Explicitly out of scope. Rootmark owns the proof protocol, not DNS infrastructure. |
+| Third-party domain-verification API | Outsources DNS verification and lifecycle management. | Verifies provider-issued records and state rather than Rootmark's challenge, requires credentials, and delegates the product's core trust decision. | Not selected. |
+
+The verification rule remains provider-independent: only an exact match for the
+server-generated token at the expected hostname can verify a claim. Multiple
+resolvers may become an explainability feature later, but users would not choose
+which resolver is authoritative and secondary observations would never weaken the
+canonical verification rule.
 
 ### Verification request sequence
 
@@ -265,46 +295,54 @@ sequenceDiagram
     actor User
     participant UI as Browser UI
     participant API as Check route
+    participant Service as Claims service
     participant Repo as ClaimsRepository
     participant Verify as Verification service
     participant DNS as DnsResolver / Cloudflare
 
     User->>UI: Check public DNS
     UI->>API: POST /api/claims/:id/check + cookie
-    API->>Repo: findOwned(claimId, sessionId)
-    Repo-->>API: Claim or null
+    API->>Service: check(sessionKey, claimId)
+    Service->>Repo: startCheck(claimId, sessionKey, cooldown)
+    Repo-->>Service: Started, rate limited, or not found
 
     alt Claim is not owned by this session
+        Service-->>API: not_found
         API-->>UI: 404 without existence details
     else Cooldown is active
+        Service-->>API: rate_limited
         API-->>UI: 429 + retryAfterSeconds
     else Check is allowed
-        API->>Verify: verifyClaim(claim, resolver)
+        Service->>Verify: verifyClaim(claim, resolver)
         par Expected hostname
             Verify->>DNS: Resolve TXT at expected FQDN
         and Common duplicated hostname
             Verify->>DNS: Resolve TXT at duplicated FQDN
         end
         DNS-->>Verify: TXT observations or lookup error
-        Verify-->>API: Discriminated CheckResult
-        API->>Repo: Persist observation or mark verified
-        Repo-->>API: Updated claim
+        Verify-->>Service: Discriminated DnsCheckResult
+        Service->>Repo: Persist observation or mark verified
+        Repo-->>Service: Updated claim
+        Service-->>API: Result + updated claim
         API-->>UI: Result + updated claim
     end
 ```
 
-The route handler owns orchestration and authorization. The verification service
-performs lookup through an injected `DnsResolver` and returns a typed result; it does
-not persist state. Only the repository mutates a claim. A resolver failure therefore
-produces `lookup_failed` without becoming evidence that the user does not control
-the domain.
+The route handler owns HTTP parsing, session acquisition, and status-code mapping.
+The claims service owns use-case orchestration and acquires the check cooldown
+atomically through the repository before making an outbound request. The verification
+service performs lookup through an injected `DnsResolver` and returns a typed result;
+it does not persist state. Only the repository mutates a claim. A primary resolver
+failure therefore produces `lookup_failed` without becoming evidence that the user
+does not control the domain, while failure of the optional wrong-host diagnostic
+cannot override valid proof observed at the expected hostname.
 
 ### Data movement and retention
 
 | Data | Path | Persisted | Exposure boundary |
 | --- | --- | --- | --- |
 | Domain input | Browser → create-claim route → normalizer | Only the normalized domain | The normalized hostname is later sent to Cloudflare as a DNS query name. The raw input is not retained. |
-| Session identifier | Server → `HttpOnly` cookie → route handler → repository filter | Cookie and `domain_claims.session_id` | Not readable by client JavaScript and never sent to Cloudflare. It is an authorization handle, not proof of identity. |
+| Session identifier | Server → `HttpOnly` cookie → route handler → SHA-256 → repository filter | Raw value in the cookie; only its hash in `domain_claims.session_key` | Not readable by client JavaScript and never sent to Cloudflare. It is an authorization handle, not proof of identity. |
 | Challenge token | Server generator → repository → owning browser → user-managed public DNS | Claim record | Intentionally becomes public in DNS. It proves control through exact placement; it must not be treated as a secret or authentication credential. |
 | TXT observations | Cloudflare DoH → resolver adapter → verification service → route handler | Latest typed check result | Returned only to the owning session. Observed values are disclosed because they help the user repair a mismatch. |
 | Verification status | Verification result → repository → owning browser | `pending` or `verified`, timestamps, latest result | Never sent to the DNS provider. Another session receives `404` rather than claim details. |
@@ -322,19 +360,19 @@ src/
     api/claims/route.ts
     api/claims/[claimId]/check/route.ts
     page.tsx
-  components/
-    claim-form.tsx
-    claim-panel.tsx
-    dns-record.tsx
-    check-result.tsx
   domain/
     claim.ts
     domain-name.ts
-    verification.ts
   server/
+    claims-service.ts
     claims-repository.ts
+    memory-claims-repository.ts
+    neon-claims-repository.ts
     dns-resolver.ts
     session.ts
+    verification.ts
+db/
+  migrations/001_create_domain_claims.sql
 ```
 
 Route contracts:
