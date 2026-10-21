@@ -178,33 +178,32 @@ The copy must say “we cannot see it yet,” not “DNS is propagating,” unle
 - Store a server-generated opaque session identifier in an `HttpOnly`, `Secure`, `SameSite=Lax` cookie and persist only its SHA-256 hash.
 - Return `404` for a claim owned by another session to avoid leaking claim existence.
 - Validate all route inputs at the server boundary.
-- Rate-limit DNS checks per claim and bound all claim API traffic at the edge.
+- Cap each anonymous session at 25 claims with a concurrency-safe database guard.
+- Enforce a per-claim DNS-check cooldown and rate-limit all claim API traffic at
+  the Vercel edge to 30 requests per minute per IP.
 - Never interpolate user input into a resolver URL without normalization and encoding.
 - Do not display the owner of an existing claim.
 - Verification copy explicitly states that adding the TXT record does not change the website, email routing, or other DNS records.
 - Do not instruct users to delete existing TXT records.
 - Removing a Rootmark claim never implies that Rootmark removed the public TXT record.
 
-## Design rationale
+## Product decisions
 
-| Choice | Product reason |
-| --- | --- |
-| Dashboard shell | Frames verification as an ongoing domain-management task rather than a disposable wizard. Only implemented destinations appear in navigation. |
-| Master-detail workspace | Keeps the domain collection visible while one claim is configured, checked, or repaired. |
-| Explained first-run state | Introduces the three-step proof model and trust boundary before asking for a domain, then reveals the focused form from one clear action. |
-| One verification card | Keeps setup, safety guidance, proof explanation, and the latest observation attached to the same claim. |
-| Progressive disclosure | Keeps the required action prominent while making proof reasoning and resolver details available on demand. |
-| Specific result states | Converts DNS observations into truthful recovery steps instead of collapsing them into “verification failed.” |
-| Latest observation + collapsed activity | Keeps the current recovery action prominent while retaining a short, human-readable sequence of meaningful state changes. Raw attempts belong in operational logs, not the product UI. |
-| Verified receipt | Records what was proven, how, and when without implying continuous ownership monitoring. |
-| Browser-session indicator | Explains the persistence boundary without suggesting that the user has an authenticated account. |
+- **Workspace, not wizard.** Domain verification is an ongoing management task,
+  so existing claims remain visible while another is configured or repaired.
+- **Specific outcomes.** Missing records, wrong values, duplicated hosts, resolver
+  failures, and ownership conflicts have different recovery paths.
+- **Status and observation are separate.** A transient DNS result does not silently
+  revoke previously established ownership.
+- **Evidence is retained.** A verified claim records what was checked and when,
+  without implying continuous monitoring.
+- **The persistence boundary is explicit.** Claims belong to an anonymous browser
+  session rather than an authenticated account.
 
 ## UX structure
 
-These high-fidelity screens communicate the intended hierarchy, copy, interaction
-states, and trust signals. The first two are captures of the running product. The
-verified receipt is a deterministic mock of the implemented success state; a final
-submission capture will replace it after a real domain passes verification.
+These captures of the running product communicate the intended hierarchy, copy,
+interaction states, and trust signals.
 
 ### Screen 1 — Multi-domain workspace
 
@@ -232,27 +231,14 @@ The success detail records what was proven, how it was proven, and when. Optiona
 guidance about removing the TXT record lives in “How DNS verification works,”
 while meaningful state transitions live in Verification activity.
 
-## Interaction details
+## Interaction requirements
 
-- “Add domain” opens a focused form without hiding or replacing the existing domain collection.
-- The header action is hidden while that form is open; first-run begins with an explanatory empty state and reveals the form from one clear action.
-- The first-domain form can be cancelled back to the empty state without creating a claim.
-- A newly created domain is selected immediately; other domains remain available in the searchable index.
-- Form submission is disabled only while the request is pending; validation is shown inline and focus moves to the error summary.
-- Copy actions confirm the specific value copied and do not replace visible labels with ambiguous icon-only controls.
-- Checking uses a pending state on the button while keeping the instructions readable.
-- Status is communicated with text and iconography, not color alone.
-- The latest check remains visible after refresh.
-- Verification activity opens in a focused dialog and shows at most five recent meaningful
-  transitions plus claim creation; consecutive identical outcomes do not create
-  duplicate rows.
-- “How DNS verification works” opens in a focused dialog and explains why the
-  token is public, what Rootmark can read, and what happens after verification.
-- Removing a claim requires confirmation, explains that DNS is unchanged, and selects the next domain or first-run state.
-- Deletion removes the claim and its per-claim verification activity. The removal
-  outcome belongs in retained operational logs, not in an activity view that no
-  longer has a claim to attach to.
-- All timestamps are rendered in the browser’s timezone with an explicit abbreviation where available.
+- Adding a domain does not hide the existing collection.
+- Pending, validation, and failure states remain readable and accessible.
+- The latest observation survives refresh; repeated identical outcomes do not
+  create duplicate activity.
+- Removing a claim explains that the public DNS record is unchanged.
+- Timestamps are rendered in the browser’s timezone.
 
 ## Architecture
 
@@ -409,6 +395,7 @@ src/
     claim.ts
     domain-name.ts
   server/
+    claims-policy.ts
     claims-service.ts
     claims-repository.ts
     memory-claims-repository.ts
@@ -434,16 +421,10 @@ Route contracts:
 - A page refresh preserves the claim, its latest result, and its meaningful verification activity.
 - Exact match, not found, wrong value, wrong host, lookup failure, rate limiting, invalid domain, unauthorized claim, and already-claimed domain are represented intentionally.
 - A claim owned by a different session returns `404`.
+- Anonymous sessions cannot create more than 25 claims, and edge enforcement
+  bounds repeated claim API requests before they reach the application.
 - Removing a claim is session-isolated and does not claim to alter public DNS.
 - The UI never claims verification before a server-side DNS match.
 - Core domain normalization and every verification result have automated tests.
 - The README explains the product thesis, security decisions, setup, tradeoffs, and known limits.
-
-## Demo narrative
-
-1. State the thesis: a trust workflow should distinguish “not proven” from “failed.”
-2. Create a claim and explain why the TXT record is harmless and uniquely scoped.
-3. Show an intentional wrong value and the observed-versus-expected recovery UI.
-4. Correct the record and verify against real DNS.
-5. Show the receipt, session isolation, state model, and one deliberate scope tradeoff.
 
