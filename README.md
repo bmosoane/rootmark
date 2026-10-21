@@ -12,7 +12,7 @@ The product is built around one trust rule: **“not proven” is not the same a
 - Only an exact server-observed token changes a claim to `verified`.
 - Check outcomes are modeled separately from claim status.
 - `not_found`, `wrong_value`, `wrong_host`, `lookup_failed`, `rate_limited`, and `already_claimed` have different recovery paths.
-- Claims are isolated by an opaque `HttpOnly` session cookie. Requests for another session’s claim return `404`.
+- Claims are isolated by an opaque `HttpOnly` session cookie whose value is hashed before persistence. Requests for another session’s claim return `404`.
 - Domains live in a searchable workspace index rather than a one-off setup flow, so adding a claim never hides existing domains.
 - Each domain detail explains why the TXT challenge proves control, what the verifier observed, and which data crosses the resolver boundary.
 - A partial unique index makes the first verified claim for a domain authoritative without revealing its owner.
@@ -42,10 +42,13 @@ Without `DATABASE_URL`, development uses an in-memory repository so the complete
 For durable local or deployed claims:
 
 ```bash
-DATABASE_URL=postgresql://... pnpm dev
+cp .env.example .env.local
+# Set DATABASE_URL in .env.local, then apply the migration once using the same URL:
+psql 'postgresql://...' -f db/migrations/001_create_domain_claims.sql
+pnpm dev
 ```
 
-The application creates its small `domain_claims` table and indexes on first use. For a larger production system, schema changes would move to versioned migrations and the check cooldown would use a shared rate limiter.
+The application intentionally does not mutate its schema during a user request. The SQL migration is explicit and must be applied before starting against a new database. Development falls back to an in-memory repository only when `DATABASE_URL` is absent; production fails fast instead of silently using ephemeral storage.
 
 ## Quality checks
 
@@ -72,6 +75,7 @@ pnpm exec next build --webpack
 - User input is encoded with `URLSearchParams` before a DNS request.
 - Resolver failures never revoke or verify a claim.
 - Existing claim ownership is never disclosed.
+- The per-claim cooldown is defense in depth, not the public abuse boundary. Before production launch, stage Vercel Firewall rate limits in log mode for both claim creation and verification, review matched traffic, then enforce them at the edge by IP.
 
 ## Known limits and production extensions
 
