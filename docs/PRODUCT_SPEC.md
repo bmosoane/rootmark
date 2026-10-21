@@ -12,7 +12,7 @@ Domain verification is a trust-sensitive coordination task disguised as a DNS fo
 
 The core promise:
 
-> Put domain ownership on record. Add one DNS record, then see exactly what we expected, what we found, and what to do next.
+> Verify that you control a domain with a DNS record. Then see exactly what we expected, what we found, and what to do next.
 
 ## Outcome and scope
 
@@ -36,6 +36,7 @@ The timeboxed product loop is:
 - Real server-side DNS lookup.
 - Specific recovery for not found, wrong value, duplicated host, lookup failure, rate limiting, and an already-claimed domain.
 - A verified receipt with method and timestamp.
+- Removal of a claim owned by the current browser session.
 - Responsive and keyboard-accessible UI.
 
 ### Deliberately out of scope
@@ -58,9 +59,9 @@ Success means I can tell what to add without understanding DNS terminology and I
 
 ### 2. Someone else controls DNS
 
-I can copy the complete instruction set and send it to a colleague or agency. The instruction explicitly says not to remove or replace existing records.
-
-Success means the other person has every required value and the claimant can return later and run the check.
+I can share the visible host and value with a colleague or agency, but delegation
+is not presented as a competing primary workflow. A dedicated handoff is a future
+extension if research shows that it is common.
 
 ### 3. I made a common mistake
 
@@ -81,6 +82,9 @@ statuses, and move between domain details without starting over.
 
 Success means adding a domain grows a manageable collection rather than stacking
 another setup form onto a one-off onboarding page.
+
+I can also remove a mistaken or obsolete claim without affecting DNS. Removing the
+last domain returns the workspace to its first-run state.
 
 ## Main flow
 
@@ -131,7 +135,9 @@ Rules:
 - A token is unique, random, and bound to one claim.
 - The first session to verify a domain owns the active claim; other sessions learn only that it is already claimed, never who claimed it.
 - Rechecking a verified claim is allowed. In the MVP, a missing record does not automatically revoke ownership; ongoing re-verification is documented as a production extension.
-- The claim stores the latest durable observation for fast rendering. A full append-only audit log is a documented production extension rather than implied by the MVP schema.
+- The claim stores the latest durable observation for fast rendering and up to 20 deduplicated outcome transitions for a compact, collapsed activity timeline. Repeated identical checks remain server logs rather than user-facing noise.
+- Continuous monitoring is not implied by verification. Scheduled rechecks, an append-only audit log, expiry policy, and an evidence-backed revocation flow remain explicit production extensions.
+- A domain-existence preflight before claim creation is a potential product add-on, not an ownership signal. It should distinguish an authoritative DNS non-existence response from a temporary lookup failure without blocking valid, newly delegated domains.
 
 ## Domain rules
 
@@ -177,6 +183,21 @@ The copy must say “we cannot see it yet,” not “DNS is propagating,” unle
 - Do not display the owner of an existing claim.
 - Verification copy explicitly states that adding the TXT record does not change the website, email routing, or other DNS records.
 - Do not instruct users to delete existing TXT records.
+- Removing a Rootmark claim never implies that Rootmark removed the public TXT record.
+
+## Design rationale
+
+| Choice | Product reason |
+| --- | --- |
+| Dashboard shell | Frames verification as an ongoing domain-management task rather than a disposable wizard. Only implemented destinations appear in navigation. |
+| Master-detail workspace | Keeps the domain collection visible while one claim is configured, checked, or repaired. |
+| Explained first-run state | Introduces the three-step proof model and trust boundary before asking for a domain, then reveals the focused form from one clear action. |
+| One verification card | Keeps setup, safety guidance, proof explanation, and the latest observation attached to the same claim. |
+| Progressive disclosure | Keeps the required action prominent while making proof reasoning and resolver details available on demand. |
+| Specific result states | Converts DNS observations into truthful recovery steps instead of collapsing them into “verification failed.” |
+| Latest observation + collapsed activity | Keeps the current recovery action prominent while retaining a short, human-readable sequence of meaningful state changes. Raw attempts belong in operational logs, not the product UI. |
+| Verified receipt | Records what was proven, how, and when without implying continuous ownership monitoring. |
+| Browser-session indicator | Explains the persistence boundary without suggesting that the user has an authenticated account. |
 
 ## UX structure
 
@@ -198,30 +219,39 @@ product.
 
 ![Rootmark pending claim with DNS instructions and latest-check recovery](./images/rootmark-pending.jpg)
 
-The pending detail keeps the required host and value together, makes individual and
-complete instructions copyable, warns against replacing existing records, and
-turns a missing lookup into a concrete next step. The domain list remains available
+The pending detail keeps the required host and value together, makes each value
+individually copyable, warns against replacing existing records, and turns a
+missing lookup into a concrete next step. The domain list remains available
 throughout the task.
 
 ### Screen 3 — Verified proof receipt
 
 ![Rootmark verified ownership receipt](./images/rootmark-verified.jpg)
 
-The success detail records what was proven, how it was proven, and when. It also
-states what removing or retaining the TXT record does—and does not—mean while
-preserving the surrounding workspace context.
+The success detail records what was proven, how it was proven, and when. Optional
+guidance about removing the TXT record lives in “How DNS verification works,”
+while meaningful state transitions live in Verification activity.
 
 ## Interaction details
 
 - “Add domain” opens a focused form without hiding or replacing the existing domain collection.
+- The header action is hidden while that form is open; first-run begins with an explanatory empty state and reveals the form from one clear action.
+- The first-domain form can be cancelled back to the empty state without creating a claim.
 - A newly created domain is selected immediately; other domains remain available in the searchable index.
 - Form submission is disabled only while the request is pending; validation is shown inline and focus moves to the error summary.
 - Copy actions confirm the specific value copied and do not replace visible labels with ambiguous icon-only controls.
 - Checking uses a pending state on the button while keeping the instructions readable.
 - Status is communicated with text and iconography, not color alone.
 - The latest check remains visible after refresh.
-- The proof model is explained in plain language next to the task, including why the token is public and what the record cannot change.
-- Resolver, queried hostname, and matching rule are progressively disclosed under “Technical details.”
+- Verification activity opens in a focused dialog and shows at most five recent meaningful
+  transitions plus claim creation; consecutive identical outcomes do not create
+  duplicate rows.
+- “How DNS verification works” opens in a focused dialog and explains why the
+  token is public, what Rootmark can read, and what happens after verification.
+- Removing a claim requires confirmation, explains that DNS is unchanged, and selects the next domain or first-run state.
+- Deletion removes the claim and its per-claim verification activity. The removal
+  outcome belongs in retained operational logs, not in an activity view that no
+  longer has a claim to attach to.
 - All timestamps are rendered in the browser’s timezone with an explicit abbreviation where available.
 
 ## Architecture
@@ -247,7 +277,7 @@ flowchart LR
     end
 
     subgraph Managed["Managed external systems"]
-        DB[("Neon Postgres<br/>claims + latest result")]
+        DB[("Neon Postgres<br/>claims + latest result + activity")]
         DNS["Cloudflare DNS-over-HTTPS<br/>public DNS observation"]
     end
 
@@ -345,7 +375,8 @@ cannot override valid proof observed at the expected hostname.
 | Session identifier | Server → `HttpOnly` cookie → route handler → SHA-256 → repository filter | Raw value in the cookie; only its hash in `domain_claims.session_key` | Not readable by client JavaScript and never sent to Cloudflare. It is an authorization handle, not proof of identity. |
 | Challenge token | Server generator → repository → owning browser → user-managed public DNS | Claim record | Intentionally becomes public in DNS. It proves control through exact placement; it must not be treated as a secret or authentication credential. |
 | TXT observations | Cloudflare DoH → resolver adapter → verification service → route handler | Latest typed check result | Returned only to the owning session. Observed values are disclosed because they help the user repair a mismatch. |
-| Verification status | Verification result → repository → owning browser | `pending` or `verified`, timestamps, latest result | Never sent to the DNS provider. Another session receives `404` rather than claim details. |
+| Verification status | Verification result → repository → owning browser | `pending` or `verified`, timestamps, latest result, and up to 20 deduplicated activity transitions | Never sent to the DNS provider. Another session receives `404` rather than claim details. |
+| Raw check attempt | Claims service → structured server log | Operational log only; retention depends on the production log sink | Contains claim ID and outcome only. Session identifiers, challenge tokens, and observed TXT values are excluded. |
 
 Of the application's claim data, the resolver request sends only the DNS query name
 and record type to Cloudflare. Session identifiers, claim IDs, and ownership status
@@ -358,9 +389,23 @@ Suggested modules:
 src/
   app/
     api/claims/route.ts
+    api/claims/[claimId]/route.ts
     api/claims/[claimId]/check/route.ts
+    error.tsx
+    global-error.tsx
     page.tsx
+  components/
+    workspace-sidebar.tsx
+    domains/add-domain-panel.tsx
+    domains/claim/claim-detail.tsx
+    domains/claim/claim-dialogs.tsx
+    domains/claim/check-result.tsx
+    domains/claim/format-date-time.ts
+    domains/domain-list.tsx
+    domains/domains-dashboard.tsx
+    domains/workspace-skeleton.tsx
   domain/
+    claim-api.ts
     claim.ts
     domain-name.ts
   server/
@@ -373,20 +418,23 @@ src/
     verification.ts
 db/
   migrations/001_create_domain_claims.sql
+  migrations/002_add_verification_activity.sql
 ```
 
 Route contracts:
 
 - `GET /api/claims` — return claims belonging to the current session.
 - `POST /api/claims` with `{ domain }` — normalize, validate, and create or return the session’s existing claim.
+- `DELETE /api/claims/:claimId` — remove an owned claim or return a privacy-preserving `404`.
 - `POST /api/claims/:claimId/check` — authorize, enforce cooldown, query DNS, persist the observation, and return the discriminated result.
 
 ## Acceptance criteria
 
 - A real TXT record on a controlled domain reaches verified state on the deployed app.
-- A page refresh preserves the claim and its latest result.
+- A page refresh preserves the claim, its latest result, and its meaningful verification activity.
 - Exact match, not found, wrong value, wrong host, lookup failure, rate limiting, invalid domain, unauthorized claim, and already-claimed domain are represented intentionally.
 - A claim owned by a different session returns `404`.
+- Removing a claim is session-isolated and does not claim to alter public DNS.
 - The UI never claims verification before a server-side DNS match.
 - Core domain normalization and every verification result have automated tests.
 - The README explains the product thesis, security decisions, setup, tradeoffs, and known limits.

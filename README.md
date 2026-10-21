@@ -1,6 +1,6 @@
 # Rootmark
 
-**Put domain ownership on record.**
+**Verify that you control a domain with a DNS record.**
 
 Rootmark is a focused, full-stack experience for validating domain ownership.
 
@@ -14,7 +14,9 @@ The product is built around one trust rule: **“not proven” is not the same a
 - `not_found`, `wrong_value`, `wrong_host`, `lookup_failed`, `rate_limited`, and `already_claimed` have different recovery paths.
 - Claims are isolated by an opaque `HttpOnly` session cookie whose value is hashed before persistence. Requests for another session’s claim return `404`.
 - Domains live in a searchable workspace index rather than a one-off setup flow, so adding a claim never hides existing domains.
+- Users can remove an owned claim without Rootmark implying that it changed the public DNS record.
 - Each domain detail explains why the TXT challenge proves control, what the verifier observed, and which data crosses the resolver boundary.
+- The primary status stays focused on the latest observation; a collapsed activity timeline retains meaningful state transitions without exposing noisy raw attempts.
 - A partial unique index makes the first verified claim for a domain authoritative without revealing its owner.
 - The app says “we cannot see it yet,” not “DNS is propagating,” because a single resolver cannot prove propagation.
 
@@ -37,7 +39,10 @@ pnpm install
 pnpm dev
 ```
 
-Without `DATABASE_URL`, development uses an in-memory repository so the complete interaction can be exercised immediately. It survives browser refreshes while the local server is running, but is intentionally not used as production persistence.
+Without `DATABASE_URL`, development uses an in-memory repository so the complete
+interaction can be exercised immediately. It survives browser refreshes and
+Next.js module hot reloads while the local server process is running, but is
+intentionally not used as production persistence.
 
 For durable local or deployed claims:
 
@@ -45,6 +50,7 @@ For durable local or deployed claims:
 cp .env.example .env.local
 # Set DATABASE_URL in .env.local, then apply the migration once using the same URL:
 psql 'postgresql://...' -f db/migrations/001_create_domain_claims.sql
+psql 'postgresql://...' -f db/migrations/002_add_verification_activity.sql
 pnpm dev
 ```
 
@@ -65,6 +71,7 @@ pnpm exec next build --webpack
 
 - `GET /api/claims` lists claims belonging to the current anonymous session.
 - `POST /api/claims` normalizes and creates a claim from `{ "domain": "example.com" }`.
+- `DELETE /api/claims/:claimId` removes a claim owned by the current session and otherwise returns `404`.
 - `POST /api/claims/:claimId/check` rate-limits, resolves both the expected and common duplicated host in parallel, persists the observation, and verifies only an exact token.
 
 ## Security and trust notes
@@ -73,6 +80,8 @@ pnpm exec next build --webpack
 - Session cookies are `HttpOnly`, `SameSite=Lax`, and `Secure` in production.
 - Domain input rejects URLs, credentials, ports, IP addresses, and malformed labels; Unicode domains are converted to ASCII.
 - User input is encoded with `URLSearchParams` before a DNS request.
+- Domain names are not sent to a third-party favicon service; the domain index
+  uses text and the locally known verification status only.
 - Resolver failures never revoke or verify a claim.
 - Existing claim ownership is never disclosed.
 - The per-claim cooldown is defense in depth, not the public abuse boundary. Before production launch, stage Vercel Firewall rate limits in log mode for both claim creation and verification, review matched traffic, then enforce them at the edge by IP.
@@ -82,6 +91,11 @@ pnpm exec next build --webpack
 - Anonymous sessions keep the initial experience lightweight but are not recoverable across browsers; production should use authenticated workspaces.
 - The MVP checks one resolver. Multi-resolver observations could support evidence-backed propagation messaging.
 - Verification is durable but not continuously revalidated. Production could add scheduled rechecks, expiry policy, and an auditable revocation flow.
+- Verification activity stores only meaningful outcome transitions while the
+  claim exists. Check attempts and claim-removal outcomes are logged server-side
+  without session identifiers, challenge tokens, or observed DNS values;
+  production observability should route those logs to a retained,
+  access-controlled sink.
 - A delegated, expiring handoff link would address the common case where an agency or colleague controls DNS.
 - The MVP intentionally excludes email authentication records, registrar integrations, and automated ownership transfers.
 
