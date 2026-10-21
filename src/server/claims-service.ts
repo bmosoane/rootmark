@@ -21,12 +21,16 @@ type ClaimsServiceDependencies = {
   repository: ClaimsRepository;
   resolver: DnsResolver;
   now?: () => Date;
+  logger?: Pick<Console, "info">;
 };
+
+const defaultLogger: Pick<Console, "info"> = console;
 
 export function createClaimsService({
   repository,
   resolver,
   now = () => new Date(),
+  logger = defaultLogger,
 }: ClaimsServiceDependencies) {
   return {
     list(sessionKey: string) {
@@ -35,6 +39,15 @@ export function createClaimsService({
 
     create(sessionKey: string, input: string) {
       return repository.create(sessionKey, normalizeDomain(input));
+    },
+
+    async remove(sessionKey: string, claimId: string) {
+      const removed = await repository.remove(claimId, sessionKey);
+      logger.info("claim_remove", {
+        claimId,
+        outcome: removed ? "removed" : "not_found",
+      });
+      return removed;
     },
 
     async check(
@@ -49,8 +62,12 @@ export function createClaimsService({
         CHECK_COOLDOWN_MS,
       );
 
-      if (start.kind === "not_found") return start;
+      if (start.kind === "not_found") {
+        logger.info("claim_check", { claimId, outcome: "not_found" });
+        return start;
+      }
       if (start.kind === "rate_limited") {
+        logger.info("claim_check", { claimId, outcome: "rate_limited" });
         return {
           kind: "rate_limited",
           claim: start.claim,
@@ -73,6 +90,7 @@ export function createClaimsService({
           sessionKey,
           result,
         );
+        logger.info("claim_check", { claimId, outcome: result.kind });
         return { kind: "completed", result, claim };
       }
 
@@ -82,6 +100,7 @@ export function createClaimsService({
         result,
       );
       if (verified !== "already_claimed") {
+        logger.info("claim_check", { claimId, outcome: result.kind });
         return { kind: "completed", result, claim: verified };
       }
 
@@ -94,6 +113,7 @@ export function createClaimsService({
         sessionKey,
         conflict,
       );
+      logger.info("claim_check", { claimId, outcome: conflict.kind });
       return { kind: "completed", result: conflict, claim };
     },
   };

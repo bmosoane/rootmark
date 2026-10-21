@@ -2,12 +2,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Claim } from "@/domain/claim";
 import { GET, POST } from "./route";
 import { POST as CHECK } from "./[claimId]/check/route";
+import { DELETE as REMOVE } from "./[claimId]/route";
 
 const mocks = vi.hoisted(() => ({
   getSessionKey: vi.fn(),
   list: vi.fn(),
   create: vi.fn(),
   check: vi.fn(),
+  remove: vi.fn(),
 }));
 
 vi.mock("@/server/session", () => ({
@@ -19,6 +21,7 @@ vi.mock("@/server/claims-service", () => ({
     list: mocks.list,
     create: mocks.create,
     check: mocks.check,
+    remove: mocks.remove,
   }),
 }));
 
@@ -50,6 +53,14 @@ function checkRequest(claimId = claim.id) {
   return CHECK(request, context as never);
 }
 
+function removeRequest(claimId = claim.id) {
+  const request = new Request(`http://localhost/api/claims/${claimId}`, {
+    method: "DELETE",
+  });
+  const context = { params: Promise.resolve({ claimId }) };
+  return REMOVE(request, context as never);
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.getSessionKey.mockResolvedValue("session-key");
@@ -65,6 +76,27 @@ describe("claims routes", () => {
     expect(response.headers.get("Cache-Control")).toBe("no-store");
     await expect(response.json()).resolves.toEqual({ claims: [claim] });
     expect(mocks.list).toHaveBeenCalledWith("session-key");
+  });
+
+  it("returns a safe retryable error when claim storage is unavailable", async () => {
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
+    mocks.list.mockRejectedValue(
+      new Error("database connection failed: secret-infrastructure-detail"),
+    );
+
+    try {
+      const response = await GET();
+
+      expect(response.status).toBe(500);
+      await expect(response.json()).resolves.toEqual({
+        error: "We could not load your domains.",
+      });
+      expect(consoleError).toHaveBeenCalledOnce();
+    } finally {
+      consoleError.mockRestore();
+    }
   });
 
   it("rejects malformed create bodies at the request boundary", async () => {
@@ -97,6 +129,26 @@ describe("claims routes", () => {
     mocks.check.mockResolvedValue({ kind: "not_found" });
 
     const response = await checkRequest();
+
+    expect(response.status).toBe(404);
+    await expect(response.json()).resolves.toEqual({
+      error: "Claim not found.",
+    });
+  });
+
+  it("removes only a claim owned by the current session", async () => {
+    mocks.remove.mockResolvedValue(true);
+
+    const response = await removeRequest();
+
+    expect(response.status).toBe(204);
+    expect(mocks.remove).toHaveBeenCalledWith("session-key", claim.id);
+  });
+
+  it("does not disclose an unowned claim during removal", async () => {
+    mocks.remove.mockResolvedValue(false);
+
+    const response = await removeRequest();
 
     expect(response.status).toBe(404);
     await expect(response.json()).resolves.toEqual({

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { challengeFor } from "@/domain/claim";
 import { createClaimsService } from "./claims-service";
 import type { DnsResolver } from "./dns-resolver";
@@ -15,6 +15,33 @@ describe("claims service", () => {
     const result = await service.create("session-a", " Example.COM. ");
 
     expect(result.claim.domain).toBe("example.com");
+  });
+
+  it("removes only a claim owned by the current session", async () => {
+    const repository = createMemoryClaimsRepository();
+    const logger = { info: vi.fn() };
+    const service = createClaimsService({
+      repository,
+      resolver: { async resolveTxt() { return []; } },
+      logger,
+    });
+    const created = await service.create("session-a", "example.com");
+
+    await expect(
+      service.remove("session-b", created.claim.id),
+    ).resolves.toBe(false);
+    await expect(
+      service.remove("session-a", created.claim.id),
+    ).resolves.toBe(true);
+    expect(logger.info).toHaveBeenNthCalledWith(1, "claim_remove", {
+      claimId: created.claim.id,
+      outcome: "not_found",
+    });
+    expect(logger.info).toHaveBeenNthCalledWith(2, "claim_remove", {
+      claimId: created.claim.id,
+      outcome: "removed",
+    });
+    expect(JSON.stringify(logger.info.mock.calls)).not.toContain("session-a");
   });
 
   it("verifies exact DNS proof and persists the ownership state", async () => {
@@ -68,5 +95,31 @@ describe("claims service", () => {
       result: { retryAfterSeconds: 10 },
     });
     expect(lookups).toBe(2);
+  });
+
+  it("logs every check attempt without proof or session secrets", async () => {
+    const repository = createMemoryClaimsRepository();
+    const logger = { info: vi.fn() };
+    const service = createClaimsService({
+      repository,
+      resolver: { async resolveTxt() { return []; } },
+      now: () => new Date("2026-10-21T10:00:00.000Z"),
+      logger,
+    });
+    const created = await service.create("private-session", "example.com");
+
+    await service.check("private-session", created.claim.id);
+    await service.check("private-session", created.claim.id);
+
+    expect(logger.info).toHaveBeenNthCalledWith(1, "claim_check", {
+      claimId: created.claim.id,
+      outcome: "not_found",
+    });
+    expect(logger.info).toHaveBeenNthCalledWith(2, "claim_check", {
+      claimId: created.claim.id,
+      outcome: "rate_limited",
+    });
+    expect(JSON.stringify(logger.info.mock.calls)).not.toContain("private-session");
+    expect(JSON.stringify(logger.info.mock.calls)).not.toContain(created.claim.token);
   });
 });

@@ -1,4 +1,8 @@
 import { z } from "zod";
+import type {
+  ApiErrorResponse,
+  CheckClaimResponse,
+} from "@/domain/claim-api";
 import { getClaimsService } from "@/server/claims-service";
 import { getOrCreateSessionKey } from "@/server/session";
 
@@ -11,7 +15,7 @@ export async function POST(
   const parsedClaimId = claimIdSchema.safeParse((await context.params).claimId);
   if (!parsedClaimId.success) {
     return Response.json(
-      { error: "Invalid claim identifier." },
+      { error: "Invalid claim identifier." } satisfies ApiErrorResponse,
       { status: 400 },
     );
   }
@@ -25,11 +29,17 @@ export async function POST(
 
     switch (outcome.kind) {
       case "not_found":
-        return Response.json({ error: "Claim not found." }, { status: 404 });
+        return Response.json(
+          { error: "Claim not found." } satisfies ApiErrorResponse,
+          { status: 404 },
+        );
 
       case "rate_limited":
         return Response.json(
-          { result: outcome.result, claim: outcome.claim },
+          {
+            result: outcome.result,
+            claim: outcome.claim,
+          } satisfies CheckClaimResponse,
           {
             status: 429,
             headers: {
@@ -40,7 +50,10 @@ export async function POST(
 
       case "completed":
         return Response.json(
-          { result: outcome.result, claim: outcome.claim },
+          {
+            result: outcome.result,
+            claim: outcome.claim,
+          } satisfies CheckClaimResponse,
           { status: outcome.result.kind === "already_claimed" ? 409 : 200 },
         );
 
@@ -52,7 +65,7 @@ export async function POST(
   } catch (error) {
     console.error("Failed to check claim", error);
     return Response.json(
-      { error: "We could not check this domain." },
+      { error: "We could not check this domain." } satisfies ApiErrorResponse,
       { status: 500 },
     );
   }
