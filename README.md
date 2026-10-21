@@ -11,7 +11,6 @@ and explains exactly what it observed without overstating certainty.
 ## Project links
 
 - **Live product:** [rootmark.vercel.app](https://rootmark.vercel.app)
-- **Video demo:** Shared privately with the review team
 - **Product and build spec:** [docs/SPEC.md](docs/SPEC.md)
 - **Current quality-check status:** Passing — [tests, typecheck, lint, and build][quality-workflow]
 
