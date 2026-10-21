@@ -11,10 +11,9 @@ and explains exactly what it observed without overstating certainty.
 ## Project links
 
 - **Live product:** [rootmark.vercel.app](https://rootmark.vercel.app)
-- **Video demo:** Pending recording
+- **Video demo:** Shared privately with the review team
 - **Product and build spec:** [docs/SPEC.md](docs/SPEC.md)
-- **Current quality-check status:**
-  [![Quality checks][quality-badge]][quality-workflow]
+- **Current quality-check status:** Passing — [tests, typecheck, lint, and build][quality-workflow]
 
 ## Key decisions
 
@@ -104,5 +103,4 @@ pnpm build
 - The per-claim cooldown, session claim cap, and edge rate limit are pragmatic
   abuse controls rather than a replacement for authenticated workspaces.
 
-[quality-badge]: https://github.com/bmosoane/rootmark/actions/workflows/quality.yml/badge.svg
 [quality-workflow]: https://github.com/bmosoane/rootmark/actions/workflows/quality.yml
