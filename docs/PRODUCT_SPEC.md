@@ -4,7 +4,7 @@ Last updated: 21 October 2026
 
 ## Why this document exists
 
-This is intentionally a combined product and implementation spec. A traditional PRD explains the user problem, outcomes, and scope; an engineering spec explains states, contracts, architecture, and acceptance criteria. For a small take-home, keeping those decisions together makes the product judgment visible and gives the build one source of truth.
+This is intentionally a combined product and implementation spec. A traditional PRD explains the user problem, outcomes, and scope; an engineering spec explains states, contracts, architecture, and acceptance criteria. For a focused product build, keeping those decisions together provides one source of truth from intent through implementation.
 
 ## Product thesis
 

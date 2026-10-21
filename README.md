@@ -2,7 +2,7 @@
 
 **Put domain ownership on record.**
 
-Rootmark is a small, full-stack domain ownership experience for the Resend Product Engineer take-home.
+Rootmark is a focused, full-stack experience for validating domain ownership.
 
 The product is built around one trust rule: **“not proven” is not the same as “failed.”** It issues a unique TXT challenge, checks public DNS on the server, and explains exactly what it observed without overstating certainty.
 
@@ -75,11 +75,11 @@ pnpm exec next build --webpack
 
 ## Known limits and production extensions
 
-- Anonymous sessions are appropriate for the take-home but not recoverable across browsers; production should use authenticated workspaces.
+- Anonymous sessions keep the initial experience lightweight but are not recoverable across browsers; production should use authenticated workspaces.
 - The MVP checks one resolver. Multi-resolver observations could support evidence-backed propagation messaging.
 - Verification is durable but not continuously revalidated. Production could add scheduled rechecks, expiry policy, and an auditable revocation flow.
 - A delegated, expiring handoff link would address the common case where an agency or colleague controls DNS.
-- The take-home intentionally excludes email authentication records, registrar integrations, and automated ownership transfers.
+- The MVP intentionally excludes email authentication records, registrar integrations, and automated ownership transfers.
 
 ## Demo outline
 
