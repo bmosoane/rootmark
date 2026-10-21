@@ -12,7 +12,6 @@ and explains exactly what it observed without overstating certainty.
 
 - **Live product:** [rootmark.vercel.app](https://rootmark.vercel.app)
 - **Product and build spec:** [docs/SPEC.md](docs/SPEC.md)
-- **Current quality-check status:** Passing — [tests, typecheck, lint, and build][quality-workflow]
 
 ## Key decisions
 
@@ -101,5 +100,3 @@ pnpm build
   revoked.
 - The per-claim cooldown, session claim cap, and edge rate limit are pragmatic
   abuse controls rather than a replacement for authenticated workspaces.
-
-[quality-workflow]: https://github.com/bmosoane/rootmark/actions/workflows/quality.yml
