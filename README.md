@@ -79,7 +79,6 @@ pnpm exec next build --webpack
 - Domain input is normalized and validated before the encoded resolver request.
 - Resolver failures never revoke or verify a claim.
 - Requests for absent or cross-session claims return the same `404` response.
-- Domain names are not sent to third-party favicon services.
 
 ## Tradeoffs
 
