@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Claim } from "@/domain/claim";
+import { ClaimLimitError } from "@/server/claims-policy";
 import { GET, POST } from "./route";
 import { POST as CHECK } from "./[claimId]/check/route";
 import { DELETE as REMOVE } from "./[claimId]/route";
@@ -116,6 +117,18 @@ describe("claims routes", () => {
 
     expect(created.status).toBe(201);
     expect(existing.status).toBe(200);
+  });
+
+  it("returns a safe conflict when the session claim limit is reached", async () => {
+    mocks.create.mockRejectedValue(new ClaimLimitError());
+
+    const response = await POST(createRequest({ domain: "example.com" }));
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toEqual({
+      error:
+        "This browser can hold up to 25 domains. Remove one before adding another.",
+    });
   });
 
   it("rejects malformed claim identifiers", async () => {

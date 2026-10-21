@@ -178,7 +178,7 @@ The copy must say “we cannot see it yet,” not “DNS is propagating,” unle
 - Store a server-generated opaque session identifier in an `HttpOnly`, `Secure`, `SameSite=Lax` cookie and persist only its SHA-256 hash.
 - Return `404` for a claim owned by another session to avoid leaking claim existence.
 - Validate all route inputs at the server boundary.
-- Rate-limit DNS checks per claim and session.
+- Rate-limit DNS checks per claim and bound all claim API traffic at the edge.
 - Never interpolate user input into a resolver URL without normalization and encoding.
 - Do not display the owner of an existing claim.
 - Verification copy explicitly states that adding the TXT record does not change the website, email routing, or other DNS records.

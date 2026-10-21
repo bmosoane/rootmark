@@ -5,6 +5,10 @@ import type {
   ClaimsRepository,
   CreateClaimResult,
 } from "@/server/claims-repository";
+import {
+  ClaimLimitError,
+  MAX_CLAIMS_PER_SESSION,
+} from "@/server/claims-policy";
 
 type StoredClaim = Claim & { sessionKey: string };
 const MAX_ACTIVITY_EVENTS = 20;
@@ -50,6 +54,13 @@ export function createMemoryClaimsRepository(): ClaimsRepository {
         (claim) => claim.sessionKey === sessionKey && claim.domain === domain,
       );
       if (existing) return { claim: publicClaim(existing), created: false };
+
+      const sessionClaimCount = [...claims.values()].filter(
+        (claim) => claim.sessionKey === sessionKey,
+      ).length;
+      if (sessionClaimCount >= MAX_CLAIMS_PER_SESSION) {
+        throw new ClaimLimitError();
+      }
 
       const claim: StoredClaim = {
         id: randomUUID(),

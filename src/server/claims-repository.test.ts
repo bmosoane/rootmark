@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { DnsCheckResult } from "@/domain/claim";
+import {
+  ClaimLimitError,
+  MAX_CLAIMS_PER_SESSION,
+} from "./claims-policy";
 import { createMemoryClaimsRepository } from "./memory-claims-repository";
 
 const verifiedResult: DnsCheckResult = {
@@ -17,6 +21,23 @@ describe("memory claims repository contract", () => {
     expect(first.created).toBe(true);
     expect(second.created).toBe(false);
     expect(second.claim.id).toBe(first.claim.id);
+  });
+
+  it("caps claims per session without blocking existing domains", async () => {
+    const repository = createMemoryClaimsRepository();
+    for (let index = 0; index < MAX_CLAIMS_PER_SESSION; index += 1) {
+      await repository.create("session-a", `domain-${index}.example`);
+    }
+
+    await expect(
+      repository.create("session-a", "one-too-many.example"),
+    ).rejects.toBeInstanceOf(ClaimLimitError);
+    await expect(
+      repository.create("session-a", "domain-0.example"),
+    ).resolves.toMatchObject({ created: false });
+    await expect(
+      repository.create("session-b", "another.example"),
+    ).resolves.toMatchObject({ created: true });
   });
 
   it("isolates claims by session", async () => {

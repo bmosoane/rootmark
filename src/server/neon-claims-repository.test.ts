@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { ClaimLimitError } from "./claims-policy";
 import { createNeonClaimsRepository } from "./neon-claims-repository";
 
 const database = vi.hoisted(() => {
@@ -10,6 +11,7 @@ const database = vi.hoisted(() => {
   return {
     connect: vi.fn(),
     query: vi.fn(),
+    transaction: vi.fn(),
     NeonDbError: MockNeonDbError,
   };
 });
@@ -46,12 +48,18 @@ function queryText(callIndex = 0) {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  database.connect.mockReturnValue(database.query);
+  database.transaction.mockImplementation(async (queries) =>
+    Promise.all(queries),
+  );
+  database.connect.mockReturnValue(
+    Object.assign(database.query, { transaction: database.transaction }),
+  );
 });
 
 describe("Neon claims repository", () => {
   it("reads an existing claim in a new statement after an insert conflict", async () => {
     database.query
+      .mockResolvedValueOnce([])
       .mockResolvedValueOnce([])
       .mockResolvedValueOnce([existingRow]);
     const repository = createNeonClaimsRepository("postgresql://example.test/db");
@@ -72,7 +80,21 @@ describe("Neon claims repository", () => {
       },
       created: false,
     });
-    expect(database.query).toHaveBeenCalledTimes(2);
+    expect(database.query).toHaveBeenCalledTimes(3);
+    expect(queryText(0)).toContain("pg_advisory_xact_lock");
+    expect(queryText(1)).toContain("SELECT COUNT(*)");
+  });
+
+  it("rejects a new claim when the session limit is reached", async () => {
+    database.query
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([]);
+    const repository = createNeonClaimsRepository("postgresql://example.test/db");
+
+    await expect(
+      repository.create("session-key", "one-too-many.example"),
+    ).rejects.toBeInstanceOf(ClaimLimitError);
   });
 
   it("reports whether an owned claim was removed", async () => {

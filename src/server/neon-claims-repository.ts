@@ -6,6 +6,10 @@ import {
   storedCheckResultSchema,
   verificationActivitySchema,
 } from "@/domain/claim-schema";
+import {
+  ClaimLimitError,
+  MAX_CLAIMS_PER_SESSION,
+} from "@/server/claims-policy";
 import type { ClaimsRepository } from "@/server/claims-repository";
 
 type DbRow = {
@@ -84,13 +88,21 @@ export function createNeonClaimsRepository(
     async create(sessionKey, domain) {
       const id = randomUUID();
       const token = randomBytes(24).toString("base64url");
-      const inserted = await sql`
-        INSERT INTO domain_claims (id, session_key, domain, token, status)
-        VALUES (${id}, ${sessionKey}, ${domain}, ${token}, 'pending')
-        ON CONFLICT (session_key, domain) DO NOTHING
-        RETURNING id, domain, token, status, created_at, last_checked_at,
-                  verified_at, latest_result, verification_activity
-      `;
+      const [, inserted] = await sql.transaction([
+        sql`SELECT pg_advisory_xact_lock(hashtextextended(${sessionKey}, 0))`,
+        sql`
+          INSERT INTO domain_claims (id, session_key, domain, token, status)
+          SELECT ${id}, ${sessionKey}, ${domain}, ${token}, 'pending'
+          WHERE (
+            SELECT COUNT(*)
+            FROM domain_claims
+            WHERE session_key = ${sessionKey}
+          ) < ${MAX_CLAIMS_PER_SESSION}
+          ON CONFLICT (session_key, domain) DO NOTHING
+          RETURNING id, domain, token, status, created_at, last_checked_at,
+                    verified_at, latest_result, verification_activity
+        `,
+      ]);
 
       if (inserted[0]) {
         return { claim: fromRow(inserted[0] as DbRow), created: true };
@@ -104,7 +116,7 @@ export function createNeonClaimsRepository(
         WHERE session_key = ${sessionKey} AND domain = ${domain}
         LIMIT 1
       `;
-      if (!existing[0]) throw new Error("Existing claim not found");
+      if (!existing[0]) throw new ClaimLimitError();
       return { claim: fromRow(existing[0] as DbRow), created: false };
     },
 

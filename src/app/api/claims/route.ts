@@ -5,6 +5,7 @@ import type {
   ListClaimsResponse,
 } from "@/domain/claim-api";
 import { InvalidDomainError } from "@/domain/domain-name";
+import { ClaimLimitError } from "@/server/claims-policy";
 import { getClaimsService } from "@/server/claims-service";
 import { getOrCreateSessionKey } from "@/server/session";
 
@@ -51,6 +52,14 @@ export async function POST(request: Request) {
       return Response.json(
         { error: error.message } satisfies ApiErrorResponse,
         { status: 400 },
+      );
+    }
+    if (error instanceof ClaimLimitError) {
+      return Response.json(
+        {
+          error: `This browser can hold up to ${error.limit} domains. Remove one before adding another.`,
+        } satisfies ApiErrorResponse,
+        { status: 409 },
       );
     }
     console.error("Failed to create claim", error);

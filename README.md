@@ -79,6 +79,8 @@ pnpm exec next build --webpack
 - Domain input is normalized and validated before the encoded resolver request.
 - Resolver failures never revoke or verify a claim.
 - Requests for absent or cross-session claims return the same `404` response.
+- Anonymous sessions are capped at 25 claims with a concurrency-safe database
+  guard.
 
 ## Tradeoffs
 
@@ -86,5 +88,5 @@ pnpm exec next build --webpack
 - The MVP observes one resolver and does not claim global DNS propagation.
 - Verification is durable but is not continuously revalidated or automatically
   revoked.
-- The per-claim cooldown is defense in depth; production also requires edge rate
-  limits for claim creation and verification.
+- The per-claim cooldown and session claim cap are defense in depth; production
+  also requires an edge rate limit across the claim API.
