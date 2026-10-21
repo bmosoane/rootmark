@@ -1,4 +1,4 @@
-# Rootmark — Product + Build Spec
+# Rootmark — Product and build spec
 
 Last updated: 21 October 2026
 

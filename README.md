@@ -6,21 +6,18 @@ Rootmark is a focused, full-stack experience for validating domain ownership.
 
 The product is built around one trust rule: **“not proven” is not the same as “failed.”** It issues a unique TXT challenge, checks public DNS on the server, and explains exactly what it observed without overstating certainty.
 
-## Product decisions
+## Key decisions
 
-- One ownership method, done well: a scoped DNS TXT challenge.
-- Only an exact server-observed token changes a claim to `verified`.
-- Check outcomes are modeled separately from claim status.
-- `not_found`, `wrong_value`, `wrong_host`, `lookup_failed`, `rate_limited`, and `already_claimed` have different recovery paths.
-- Claims are isolated by an opaque `HttpOnly` session cookie whose value is hashed before persistence. Requests for another session’s claim return `404`.
-- Domains live in a searchable workspace index rather than a one-off setup flow, so adding a claim never hides existing domains.
-- Users can remove an owned claim without Rootmark implying that it changed the public DNS record.
-- Each domain detail explains why the TXT challenge proves control, what the verifier observed, and which data crosses the resolver boundary.
-- The primary status stays focused on the latest observation; a collapsed activity timeline retains meaningful state transitions without exposing noisy raw attempts.
-- A partial unique index makes the first verified claim for a domain authoritative without revealing its owner.
-- The app says “we cannot see it yet,” not “DNS is propagating,” because a single resolver cannot prove propagation.
+- Verification requires an exact server-observed DNS token.
+- Claim status is separate from the latest DNS observation, so transient failures
+  cannot revoke ownership.
+- Anonymous claims are isolated by a hashed, secure browser-session identifier.
+- DNS outcomes have specific recovery paths rather than a generic failure state.
+- The workspace supports multiple searchable claims and removal without implying
+  that Rootmark changed public DNS.
 
-The complete product, UX, state, architecture, and acceptance spec is in [docs/PRODUCT_SPEC.md](docs/PRODUCT_SPEC.md).
+The complete product, UX, state, architecture, and acceptance spec is in
+[docs/SPEC.md](docs/SPEC.md).
 
 ## Stack
 
@@ -74,35 +71,21 @@ pnpm exec next build --webpack
 - `DELETE /api/claims/:claimId` removes a claim owned by the current session and otherwise returns `404`.
 - `POST /api/claims/:claimId/check` rate-limits, resolves both the expected and common duplicated host in parallel, persists the observation, and verifies only an exact token.
 
-## Security and trust notes
+## Security and trust
 
 - Challenge values use 192 bits from Node’s cryptographic random source.
-- Session cookies are `HttpOnly`, `SameSite=Lax`, and `Secure` in production.
-- Domain input rejects URLs, credentials, ports, IP addresses, and malformed labels; Unicode domains are converted to ASCII.
-- User input is encoded with `URLSearchParams` before a DNS request.
-- Domain names are not sent to a third-party favicon service; the domain index
-  uses text and the locally known verification status only.
+- Session identifiers are stored in `HttpOnly`, `SameSite=Lax`, production-secure
+  cookies and are hashed before persistence.
+- Domain input is normalized and validated before the encoded resolver request.
 - Resolver failures never revoke or verify a claim.
-- Existing claim ownership is never disclosed.
-- The per-claim cooldown is defense in depth, not the public abuse boundary. Before production launch, stage Vercel Firewall rate limits in log mode for both claim creation and verification, review matched traffic, then enforce them at the edge by IP.
+- Requests for absent or cross-session claims return the same `404` response.
+- Domain names are not sent to third-party favicon services.
 
-## Known limits and production extensions
+## Tradeoffs
 
-- Anonymous sessions keep the initial experience lightweight but are not recoverable across browsers; production should use authenticated workspaces.
-- The MVP checks one resolver. Multi-resolver observations could support evidence-backed propagation messaging.
-- Verification is durable but not continuously revalidated. Production could add scheduled rechecks, expiry policy, and an auditable revocation flow.
-- Verification activity stores only meaningful outcome transitions while the
-  claim exists. Check attempts and claim-removal outcomes are logged server-side
-  without session identifiers, challenge tokens, or observed DNS values;
-  production observability should route those logs to a retained,
-  access-controlled sink.
-- A delegated, expiring handoff link would address the common case where an agency or colleague controls DNS.
-- The MVP intentionally excludes email authentication records, registrar integrations, and automated ownership transfers.
-
-## Demo outline
-
-1. Add a domain from the workspace and show that existing domains remain searchable and selectable.
-2. Explain why the TXT record is harmless, public, and uniquely scoped.
-3. Add an intentional wrong value and show observed-versus-expected recovery.
-4. Correct the value and complete a real DNS verification.
-5. Show the receipt, session isolation, typed outcomes, and deliberate scope tradeoffs.
+- Anonymous sessions are lightweight but are not recoverable across browsers.
+- The MVP observes one resolver and does not claim global DNS propagation.
+- Verification is durable but is not continuously revalidated or automatically
+  revoked.
+- The per-claim cooldown is defense in depth; production also requires edge rate
+  limits for claim creation and verification.
