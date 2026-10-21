@@ -51,6 +51,26 @@ export const storedCheckResultSchema = z.discriminatedUnion("kind", [
   alreadyClaimedCheckResultSchema,
 ]);
 
+export const verificationActivityEventSchema = z.object({
+  kind: z.enum([
+    "verified",
+    "not_found",
+    "wrong_value",
+    "wrong_host",
+    "lookup_failed",
+    "already_claimed",
+  ]),
+  observedAt: z.string(),
+});
+
+export const verificationActivitySchema = z.array(
+  verificationActivityEventSchema,
+);
+
 export type DnsCheckResult = z.infer<typeof dnsCheckResultSchema>;
 
 export type StoredCheckResult = z.infer<typeof storedCheckResultSchema>;
+
+export type VerificationActivityEvent = z.infer<
+  typeof verificationActivityEventSchema
+>;

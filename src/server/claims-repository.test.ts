@@ -34,6 +34,15 @@ describe("memory claims repository contract", () => {
     ).resolves.toEqual({ kind: "not_found" });
   });
 
+  it("removes only a claim owned by the current session", async () => {
+    const repository = createMemoryClaimsRepository();
+    const { claim } = await repository.create("session-a", "example.com");
+
+    await expect(repository.remove(claim.id, "session-b")).resolves.toBe(false);
+    await expect(repository.remove(claim.id, "session-a")).resolves.toBe(true);
+    await expect(repository.list("session-a")).resolves.toEqual([]);
+  });
+
   it("acquires a check cooldown atomically", async () => {
     const repository = createMemoryClaimsRepository();
     const { claim } = await repository.create("session-a", "example.com");
@@ -61,5 +70,62 @@ describe("memory claims repository contract", () => {
     await expect(
       repository.markVerified(second.claim.id, "session-b", verifiedResult),
     ).resolves.toBe("already_claimed");
+  });
+
+  it("preserves the original verification timestamp on repeated verification", async () => {
+    const repository = createMemoryClaimsRepository();
+    const { claim } = await repository.create("session-a", "example.com");
+    const laterResult: DnsCheckResult = {
+      kind: "verified",
+      checkedAt: "2026-10-21T11:00:00.000Z",
+      verifiedAt: "2026-10-21T11:00:00.000Z",
+    };
+
+    await repository.markVerified(claim.id, "session-a", verifiedResult);
+    const repeated = await repository.markVerified(
+      claim.id,
+      "session-a",
+      laterResult,
+    );
+
+    expect(repeated).toMatchObject({
+      verifiedAt: verifiedResult.verifiedAt,
+      lastCheckedAt: laterResult.checkedAt,
+    });
+  });
+
+  it("records meaningful transitions without repeating identical outcomes", async () => {
+    const repository = createMemoryClaimsRepository();
+    const { claim } = await repository.create("session-a", "example.com");
+    const firstMissing = {
+      kind: "not_found",
+      checkedAt: "2026-10-21T10:00:00.000Z",
+    } as const;
+    const secondMissing = {
+      kind: "not_found",
+      checkedAt: "2026-10-21T10:01:00.000Z",
+    } as const;
+
+    await repository.recordResult(claim.id, "session-a", firstMissing);
+    const repeated = await repository.recordResult(
+      claim.id,
+      "session-a",
+      secondMissing,
+    );
+    const verified = await repository.markVerified(
+      claim.id,
+      "session-a",
+      verifiedResult,
+    );
+
+    expect(repeated.verificationActivity).toEqual([
+      { kind: "not_found", observedAt: firstMissing.checkedAt },
+    ]);
+    expect(verified).toMatchObject({
+      verificationActivity: [
+        { kind: "not_found", observedAt: firstMissing.checkedAt },
+        { kind: "verified", observedAt: verifiedResult.checkedAt },
+      ],
+    });
   });
 });

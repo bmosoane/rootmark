@@ -31,6 +31,7 @@ const claim: Claim = {
   lastCheckedAt: null,
   verifiedAt: null,
   latestResult: null,
+  verificationActivity: [],
 };
 
 function createRequest(body: unknown) {

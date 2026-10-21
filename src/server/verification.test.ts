@@ -12,6 +12,7 @@ const claim: Claim = {
   lastCheckedAt: null,
   verifiedAt: null,
   latestResult: null,
+  verificationActivity: [],
 };
 
 function resolver(values: Record<string, string[]>): DnsResolver {

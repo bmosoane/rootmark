@@ -1,11 +1,24 @@
 import { randomBytes, randomUUID } from "node:crypto";
-import type { Claim } from "@/domain/claim";
+import { activityEventFor } from "@/domain/claim";
+import type { Claim, StoredCheckResult } from "@/domain/claim";
 import type {
   ClaimsRepository,
   CreateClaimResult,
 } from "@/server/claims-repository";
 
 type StoredClaim = Claim & { sessionKey: string };
+const MAX_ACTIVITY_EVENTS = 20;
+
+function recordActivity(claim: StoredClaim, result: StoredCheckResult) {
+  const event = activityEventFor(result);
+  const previous = claim.verificationActivity.at(-1);
+  if (previous?.kind === event.kind) return;
+
+  claim.verificationActivity = [
+    ...claim.verificationActivity,
+    event,
+  ].slice(-MAX_ACTIVITY_EVENTS);
+}
 
 function publicClaim(claim: StoredClaim): Claim {
   return {
@@ -17,6 +30,7 @@ function publicClaim(claim: StoredClaim): Claim {
     lastCheckedAt: claim.lastCheckedAt,
     verifiedAt: claim.verifiedAt,
     latestResult: claim.latestResult,
+    verificationActivity: [...claim.verificationActivity],
   };
 }
 
@@ -47,9 +61,16 @@ export function createMemoryClaimsRepository(): ClaimsRepository {
         lastCheckedAt: null,
         verifiedAt: null,
         latestResult: null,
+        verificationActivity: [],
       };
       claims.set(claim.id, claim);
       return { claim: publicClaim(claim), created: true };
+    },
+
+    async remove(id, sessionKey) {
+      const claim = claims.get(id);
+      if (!claim || claim.sessionKey !== sessionKey) return false;
+      return claims.delete(id);
     },
 
     async startCheck(id, sessionKey, startedAt, cooldownMs) {
@@ -79,6 +100,7 @@ export function createMemoryClaimsRepository(): ClaimsRepository {
       }
       claim.latestResult = result;
       claim.lastCheckedAt = result.checkedAt;
+      recordActivity(claim, result);
       return publicClaim(claim);
     },
 
@@ -97,9 +119,10 @@ export function createMemoryClaimsRepository(): ClaimsRepository {
       if (owner) return "already_claimed";
 
       claim.status = "verified";
-      claim.verifiedAt = result.verifiedAt;
+      claim.verifiedAt ??= result.verifiedAt;
       claim.lastCheckedAt = result.checkedAt;
       claim.latestResult = result;
+      recordActivity(claim, result);
       return publicClaim(claim);
     },
   };

@@ -15,6 +15,7 @@ export type StartCheckResult =
 export interface ClaimsRepository {
   list(sessionKey: string): Promise<Claim[]>;
   create(sessionKey: string, domain: string): Promise<CreateClaimResult>;
+  remove(id: string, sessionKey: string): Promise<boolean>;
   startCheck(
     id: string,
     sessionKey: string,
@@ -33,7 +34,16 @@ export interface ClaimsRepository {
   ): Promise<Claim | "already_claimed">;
 }
 
-const memoryRepository = createMemoryClaimsRepository();
+const globalRepositories = globalThis as typeof globalThis & {
+  rootmarkMemoryRepository?: ClaimsRepository;
+};
+const memoryRepository =
+  globalRepositories.rootmarkMemoryRepository ?? createMemoryClaimsRepository();
+
+if (process.env.NODE_ENV !== "production") {
+  globalRepositories.rootmarkMemoryRepository = memoryRepository;
+}
+
 let neonRepository: ClaimsRepository | null = null;
 let neonRepositoryUrl: string | null = null;
 
